@@ -1,0 +1,42 @@
+name: Qualtrics Export to CSV
+
+on:
+  schedule:
+    - cron: "*/2 * * * *" # Runs every 2 minutes
+  workflow_dispatch: # Allow manual runs too
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set environment variables
+        run: |
+          echo "baseUrl=${{ secrets.QUALTRICS_BASE_URL }}" >> .env
+          echo "apiKey=${{ secrets.QUALTRICS_API_KEY }}" >> .env
+          echo "surveyId=${{ secrets.QUALTRICS_SURVEY_ID }}" >> .env
+
+      - name: Create output folder
+        run: mkdir -p exports
+
+      - name: Run export script
+        run: python launch.py
+
+      - name: Upload CSV to artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: survey-export
+          path: exports/
