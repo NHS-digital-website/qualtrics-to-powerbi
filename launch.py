@@ -6,21 +6,41 @@ import json
 import time
 import csv
 import re
+import pandas as pd
+import requests
+from io import StringIO
 
 # Working but with no tests or fail safes...
+
+def load_properties(filepath):
+    props = {}
+    with open(filepath, "r", encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key_value = line.split("=", 1)
+            if len(key_value) == 2:
+                key, value = key_value
+                props[key.strip()] = value.strip()
+    return props
+
+# Load configuration once
+CONFIG = load_properties("config.properties")
+
 
 def connect_and_export(surveyId):
     surveyId = surveyId[0]
     print(f'Extracting: {surveyId}')
     
-    conn = http.client.HTTPSConnection(os.getenv("baseUrl"))
+    conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
 
     payload = "{\n  \"format\": \"csv\",\n  \"compress\": false,\n  \"useLabels\": true\n}"
 
     headers = {
         'Content-Type': "application/json",
         'Accept': "application/json",
-        'X-API-TOKEN': os.getenv("apiKey")
+        'X-API-TOKEN': os.getenv("qualtricsApiKey")
     }
 
     conn.request("POST", f'/API/v3/surveys/{surveyId}/export-responses', payload, headers)
@@ -51,11 +71,11 @@ def loop_check_completion(surveyId, exportProgressId):
     
     while percentComplete < 100:
         
-        conn = http.client.HTTPSConnection(os.getenv("baseUrl"))
+        conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
 
         headers = {
             'Accept': "application/json",
-            'X-API-TOKEN': os.getenv("apiKey")
+            'X-API-TOKEN': os.getenv("qualtricsApiKey")
         }
 
         conn.request("GET", f'/API/v3/surveys/{surveyId}/export-responses/{exportProgressId}', headers=headers)
@@ -78,11 +98,11 @@ def loop_check_completion(surveyId, exportProgressId):
 
 def get_survey_name(surveyId, fileId):
     
-    conn = http.client.HTTPSConnection(os.getenv("baseUrl"))
+    conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
 
     headers = {
         'Accept': "application/json",
-        'X-API-TOKEN': os.getenv("apiKey")
+        'X-API-TOKEN': os.getenv("qualtricsApiKey")
     }
 
     conn.request("GET", f"/API/v3/survey-definitions/{surveyId}", headers=headers)
@@ -105,49 +125,83 @@ def get_survey_name(surveyId, fileId):
         
     export_the_file(surveyId, fileId, CleanedSurveyName, Questions)
 
-    
-
+def mask_pii(text):
+    if pd.isnull(text):
+        return text
+    # Mask email addresses
+    text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '#####', text)
+    # Mask 10-digit phone numbers (basic pattern)
+    text = re.sub(r'\b\d{10}\b', '#####', text)
+    return text
 
 def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
-    
-    conn = http.client.HTTPSConnection(os.getenv("baseUrl"))
+    conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
 
     headers = {
         'Accept': "application/octet-stream, application/json",
-        'X-API-TOKEN': os.getenv("apiKey")
+        'X-API-TOKEN': os.getenv("qualtricsApiKey")
     }
 
     conn.request("GET", f'/API/v3/surveys/{surveyId}/export-responses/{fileId}/file', headers=headers)
 
     res = conn.getresponse()
     data = res.read()
-    # print(data)
-
     utf8_encoded_data = data.decode("utf-8")
-        
-    # Specify the file path for survey data
-    data_file_path = f"./exports/{surveyId}_{CleanedSurveyName}.csv"
 
-    # Write survey data to CSV file
-    with open(data_file_path, mode='w', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        rows = list(csv.reader(utf8_encoded_data.splitlines()))
-        writer.writerows(rows)
+    # Read CSV
+    df = pd.read_csv(StringIO(utf8_encoded_data))
 
-    print(f'Survey data has been exported to {data_file_path}')
-    
+    # Filter by retain columns
+    retain_columns = [col.strip() for col in CONFIG.get("retainColumns").split('|')]
+    filtered_df = df[[col for col in retain_columns if col in df.columns]]
+
+    # File paths
+    base_path = f"./exports/{surveyId}_{CleanedSurveyName}"
+    file1 = f"{base_path}_1.csv"  # Unmasked
+    file2 = f"{base_path}_2.csv"  # Masked
+
+    # Save original version
+    filtered_df.to_csv(file1, index=False, encoding='utf-8')
+    print(f'✅ Original (unmasked) CSV saved to: {file1}')
+
+    # Start masking process
+    masked_df = filtered_df.copy()
+
+    # Apply partial PII masking
+    columns_to_mask = CONFIG.get("columnstomask").split('|')
+    for col in columns_to_mask:
+        if col in masked_df.columns:
+            masked_df[col] = masked_df[col].apply(mask_pii)
+
+    # Apply conditional full replacement: replace only non-empty values with 'XXXXX'
+    columns_to_replace_raw = CONFIG.get("columnsToReplaceHashCompletely", "").strip()
+
+    if columns_to_replace_raw:
+        columns_to_replace = [col.strip() for col in columns_to_replace_raw.split('|') if col.strip()]
+        for col in columns_to_replace:
+            if col in masked_df.columns:
+                masked_df[col] = masked_df[col].apply(lambda x: '#####' if pd.notna(x) and str(x).strip() != '' else x)
+   
+
+
+    # Save masked version
+    masked_df.to_csv(file2, index=False, encoding='utf-8')
+    print(f'✅ Masked (PII filtered + conditional replacements) CSV saved to: {file2}')
+
     time.sleep(1)
 
-    get_questions(surveyId, CleanedSurveyName)
+    #get_questions(surveyId, CleanedSurveyName)
+    #push_to_power_bi(file1)
+
 
 
 def get_questions(surveyId, CleanedSurveyName):
 
-    conn = http.client.HTTPSConnection(os.getenv("baseUrl"))
+    conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
 
     headers = {
     'Accept': "application/json",
-    'X-API-TOKEN': os.getenv("apiKey")
+    'X-API-TOKEN': os.getenv("qualtricsApiKey")
     }
 
     conn.request("GET", f'/API/v3/survey-definitions/{surveyId}/questions', headers=headers)
@@ -165,7 +219,77 @@ def get_questions(surveyId, CleanedSurveyName):
         json.dump(decode, f)
 
     print(f'Survey questions exported to {data_file_path2}')
+    #push_to_power_bi(data_file_path2)
+    #get_powerBI_table_name()
 
+
+def get_access_token():
+    url = f"https://login.microsoftonline.com/{os.getenv('tenantID')}/oauth2/v2.0/token"
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    data = {
+        'grant_type': 'client_credentials',
+        'client_id': os.getenv('appClientID'),
+        'client_secret': os.getenv('azureAppSecret'),
+        'scope': 'https://analysis.windows.net/powerbi/api/.default'
+    }
+
+    response = requests.post(url, headers=headers, data=data)
+    response.raise_for_status()    
+    print(f"Access Token - {response.json()['access_token']}")
+    return response.json()['access_token']
+
+def push_to_power_bi(csv_path):
+    access_token = get_access_token()
+    
+    df = pd.read_csv(csv_path)
+
+    # Fix for out-of-range or NaN values
+    df.replace([float('inf'), float('-inf')], None, inplace=True)
+    df = df.where(pd.notnull(df), None)  # Replace NaN with None
+
+    records = df.to_dict(orient='records')
+    
+    pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{os.getenv('powerBIDatasetID')}/tables/{os.getenv('powerBITableName')}/rows"
+    print(f"Power BI URL: {pbi_url} ")
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    try:
+        response = requests.post(pbi_url, headers=headers, json={"rows": records})
+        response.raise_for_status()
+        print("✅ Successfully pushed data to Power BI.")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to push to Power BI: {e}")
+
+
+def get_powerBI_table_name():
+    access_token = get_access_token()
+    workspace_id = os.getenv('powerBIWorkspaceID')
+    dataset_id =  os.getenv('powerBIDatasetID')
+    print(f"Workspace ID: {workspace_id}")
+    print(f"Dataset ID: {dataset_id}")
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    url = f'https://api.powerbi.com/v1.0/myorg/groups/{workspace_id}/datasets/{dataset_id}/tables'
+
+    response = requests.get(url, headers=headers)
+    
+    # Debugging info
+    print(f"Status Code: {response.status_code}")
+    print(f"Response Text: {response.text}")
+
+    try:
+        data = response.json()
+        print(data)
+    except Exception as e:
+        print("Failed to parse JSON:", str(e))
+
+    
 
 def loop_surveys():
     
