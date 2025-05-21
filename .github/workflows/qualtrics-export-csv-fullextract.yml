@@ -38,7 +38,7 @@ jobs:
         run: mkdir -p exports
 
       - name: Run export script
-        run: python launch-daily.py
+        run: python launch-fullextract-csv.py
 
       - name: Upload CSV to artifact
         uses: actions/upload-artifact@v4
