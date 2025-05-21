@@ -1,4 +1,4 @@
-name: Qualtrics Export to CSV
+name: Qualtrics Full extract Export to CSV - Daily
 
 on:
   schedule:
@@ -27,9 +27,9 @@ jobs:
         run: |
           echo "qualtricsBaseUrl=${{ secrets.QUALTRICS_BASE_URL }}" >> .env
           echo "qualtricsApiKey=${{ secrets.QUALTRICS_API_KEY }}" >> .env
-          echo "appClientID=${{ secrets.AZURE_APP_CLIENT_ID }}" >> .env
-          echo "tenantID=${{ secrets.AZURE_TENANT_ID.env }}" >> .env
+          echo "appClientID=${{ secrets.AZURE_APP_CLIENT_ID }}" >> .env          
           echo "azureAppSecret=${{ secrets.AZURE_APP_SECRET }}" >> .env
+          echo "tenantID=${{ secrets.AZURE_TENANT_ID.env }}" >> .env
           echo "powerBIWorkspaceID=${{ secrets.POWER_BI_WORSPACE_ID }}" >> .env
           echo "powerBIDatasetID=${{ secrets.POWERBI_DATASET_ID }}" >> .env
           echo "powerBITableName=${{ secrets.POWERBI_TABLE_NAME }}" >> .env
@@ -38,7 +38,7 @@ jobs:
         run: mkdir -p exports
 
       - name: Run export script
-        run: python launch.py
+        run: python launch-daily.py
 
       - name: Upload CSV to artifact
         uses: actions/upload-artifact@v4

@@ -9,6 +9,7 @@ import re
 import pandas as pd
 import requests
 from io import StringIO
+from datetime import datetime, timedelta, timezone
 
 # Working but with no tests or fail safes...
 
@@ -32,10 +33,36 @@ CONFIG = load_properties("config.properties")
 def connect_and_export(surveyId):
     surveyId = surveyId[0]
     print(f'Extracting: {surveyId}')
-    
+
+    # Try to read 'yesterday' from config.properties
+    config_incrementalDay = CONFIG.get("incrementalDay")
+
+    if config_incrementalDay:
+        try:
+            # Parse config value
+            date_obj = datetime.strptime(config_incrementalDay, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            print(f"📅 Using 'incrementalDay' date from config.properties: {config_incrementalDay}")
+        except ValueError:
+            raise ValueError("Invalid date format for 'yesterday' in config.properties. Use YYYY-MM-DD.")
+    else:
+        # Default: calculate yesterday
+        date_obj = datetime.now(timezone.utc) - timedelta(days=1)
+        print(f"📅 Using default calculated 'yesterday': {date_obj.strftime('%Y-%m-%d')}")
+
+    start_date = date_obj.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    end_date = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+
+    print(f"Fetching data from: {start_date} to {end_date}")
+
     conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
 
-    payload = "{\n  \"format\": \"csv\",\n  \"compress\": false,\n  \"useLabels\": true\n}"
+    payload = json.dumps({
+        "format": "csv",
+        "compress": False,
+        "useLabels": True,
+        "startDate": start_date,
+        "endDate": end_date
+    })
 
     headers = {
         'Content-Type': "application/json",
@@ -44,14 +71,10 @@ def connect_and_export(surveyId):
     }
 
     conn.request("POST", f'/API/v3/surveys/{surveyId}/export-responses', payload, headers)
-
     res = conn.getresponse()
     data = res.read()
 
-    # print(data.decode("utf-8"))
-    
     extract_progress_id(surveyId, data)
-
 
 def extract_progress_id(surveyId, data):
     # Parse the JSON data
@@ -157,8 +180,8 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
 
     # File paths
     base_path = f"./exports/{surveyId}_{CleanedSurveyName}"
-    file1 = f"{base_path}_1.csv"  # Unmasked
-    file2 = f"{base_path}_2.csv"  # Masked
+    file1 = f"{base_path}_Dailyseed_1.csv"  # Unmasked
+    file2 = f"{base_path}_Dailyseed_2.csv"  # Masked
 
     # Save original version
     filtered_df.to_csv(file1, index=False, encoding='utf-8')
@@ -168,7 +191,7 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
     masked_df = filtered_df.copy()
 
     # Apply partial PII masking
-    columns_to_mask = CONFIG.get("columnstomask").split('|')
+    columns_to_mask = CONFIG.get("emailIDAndPhoneNoHashingColumns").split('|')
     for col in columns_to_mask:
         if col in masked_df.columns:
             masked_df[col] = masked_df[col].apply(mask_pii)
@@ -191,37 +214,8 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
     time.sleep(1)
 
     #get_questions(surveyId, CleanedSurveyName)
-    #push_to_power_bi(file1)
-
-
-
-def get_questions(surveyId, CleanedSurveyName):
-
-    conn = http.client.HTTPSConnection(os.getenv("qualtricsBaseUrl"))
-
-    headers = {
-    'Accept': "application/json",
-    'X-API-TOKEN': os.getenv("qualtricsApiKey")
-    }
-
-    conn.request("GET", f'/API/v3/survey-definitions/{surveyId}/questions', headers=headers)
-
-    res = conn.getresponse()
-    data = res.read()
-
-    decode = data.decode("utf-8")
-
-    # Specify the file path for survey questions
-    data_file_path2 = f"./exports/{surveyId}_{CleanedSurveyName}_Questions.json"
-
-    # Write survey questions to a json file
-    with open(data_file_path2, 'w') as f:
-        json.dump(decode, f)
-
-    print(f'Survey questions exported to {data_file_path2}')
-    #push_to_power_bi(data_file_path2)
-    #get_powerBI_table_name()
-
+    push_to_power_bi(file2)
+    
 
 def get_access_token():
     url = f"https://login.microsoftonline.com/{os.getenv('tenantID')}/oauth2/v2.0/token"
@@ -239,29 +233,36 @@ def get_access_token():
     return response.json()['access_token']
 
 def push_to_power_bi(csv_path):
-    access_token = get_access_token()
-    
+    # Load CSV
     df = pd.read_csv(csv_path)
 
-    # Fix for out-of-range or NaN values
-    df.replace([float('inf'), float('-inf')], None, inplace=True)
-    df = df.where(pd.notnull(df), None)  # Replace NaN with None
+    # Convert DataFrame rows to list of dicts (Power BI format)
+    rows = df.where(pd.notnull(df), None).to_dict(orient='records')
 
-    records = df.to_dict(orient='records')
-    
-    pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{os.getenv('powerBIDatasetID')}/tables/{os.getenv('powerBITableName')}/rows"
-    print(f"Power BI URL: {pbi_url} ")
+    access_token = get_access_token()
+
+    # Prepare request
+    dataset_id = os.getenv("powerBIDatasetID")
+    table_name = os.getenv("powerBITableName")
+    workspace_id = os.getenv("powerBIWorkspaceID")
+
+    insert_url = f"https://api.powerbi.com/v1.0/myorg/groups/{workspace_id}/datasets/{dataset_id}/tables/{table_name}/rows"
+
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {access_token}'
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
     }
 
-    try:
-        response = requests.post(pbi_url, headers=headers, json={"rows": records})
-        response.raise_for_status()
-        print("✅ Successfully pushed data to Power BI.")
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to push to Power BI: {e}")
+    # Power BI accepts up to 10,000 rows at once. You can batch if needed.
+    payload = {"rows": rows}
+
+    response = requests.post(insert_url, headers=headers, data=json.dumps(payload))
+
+    if response.status_code == 200:
+        print("✅ Data inserted into Power BI table successfully.")
+    else:
+        print("❌ Failed to insert rows:")
+        print(response.status_code, response.text)
 
 
 def get_powerBI_table_name():
