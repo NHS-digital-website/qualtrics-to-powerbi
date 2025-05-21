@@ -1,4 +1,4 @@
-name: Qualtrics Incremental updates Export to PowerBI - Daily
+name: Qualtrics incremental updates to PowerBI - Daily
 
 on:
   schedule:

@@ -1,4 +1,4 @@
-name: Qualtrics Full extract Export to CSV - Daily
+name: Qualtrics Full extract to CSV - Daily
 
 on:
   schedule:
