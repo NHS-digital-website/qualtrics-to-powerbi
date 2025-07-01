@@ -24,7 +24,7 @@ Fetch data from Qualtrics API and push it to Power BI and Sharepoint using REST 
 
 - python launch-incremental-powerbi.py - This is to load incremental updates from qualtrics to power BI
 
-# launch-fullextract-csv.py:
+# Qualtrics Full extract to Sharepoint & Power BI(Optional) - Daily [launch-fullextract-csv.py]:
 
 ### **Overview of the Script**
 
@@ -106,7 +106,7 @@ This Python script automates the process of exporting survey data from Qualtrics
 
 ---
 
-# launch-incremental-powerbi.py:
+# Qualtrics incremental updates to PowerBI - Daily [launch-incremental-powerbi.py]:
 
 ### **Overview of the Script**
 
