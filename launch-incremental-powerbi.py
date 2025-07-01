@@ -180,12 +180,12 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
 
     # File paths
     base_path = f"./exports/{surveyId}_{CleanedSurveyName}"
-    file1 = f"{base_path}_Dailyseed_1.csv"  # Unmasked
-    file2 = f"{base_path}_Dailyseed_2.csv"  # Masked
+    excel_path1 = f"{base_path}_Dailyseed_1.xlsx"  # Unmasked
+    excel_path2 = f"{base_path}_Dailyseed_2.xlsx" # Masked
 
     # Save original version
-    filtered_df.to_csv(file1, index=False, encoding='utf-8')
-    print(f'✅ Original (unmasked) CSV saved to: {file1}')
+    filtered_df.to_excel(excel_path1, index=False, engine='openpyxl')
+    print(f'✅ Excel (unmasked) saved to: {excel_path1}')
 
     # Start masking process
     masked_df = filtered_df.copy()
@@ -204,26 +204,24 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
         for col in columns_to_replace:
             if col in masked_df.columns:
                 masked_df[col] = masked_df[col].apply(lambda x: '#####' if pd.notna(x) and str(x).strip() != '' else x)
-   
 
-
-    # Save masked version
-    masked_df.to_csv(file2, index=False, encoding='utf-8')
-    print(f'✅ Masked (PII filtered + conditional replacements) CSV saved to: {file2}')
+    # Save masked version    
+    masked_df.to_excel(excel_path2, index=False, engine='openpyxl')
+    print(f'✅ Masked (PII filtered + conditional replacements) Excel file saved to: {excel_path2}')
 
     time.sleep(1)
 
     #get_questions(surveyId, CleanedSurveyName)
-    push_to_power_bi(file2)
+    push_to_power_bi(excel_path2)
     
 
 def get_access_token():
-    url = f"https://login.microsoftonline.com/{os.getenv('tenantID')}/oauth2/v2.0/token"
+    url = f"https://login.microsoftonline.com/{os.getenv('azureTenantID')}/oauth2/v2.0/token"
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
     data = {
         'grant_type': 'client_credentials',
-        'client_id': os.getenv('appClientID'),
-        'client_secret': os.getenv('azureAppSecret'),
+        'client_id': os.getenv('azureClientID'),
+        'client_secret': os.getenv('azureClientSecret'),
         'scope': 'https://analysis.windows.net/powerbi/api/.default'
     }
 
@@ -232,9 +230,10 @@ def get_access_token():
     print(f"Access Token - {response.json()['access_token']}")
     return response.json()['access_token']
 
-def push_to_power_bi(csv_path):
-    # Load CSV
-    df = pd.read_csv(csv_path)
+def push_to_power_bi(masked_excel_file_path):
+    # Load Excel file into a DataFrame    
+    df = pd.read_excel(masked_excel_file_path, engine='openpyxl')
+    print(f"📤 Pushing data to Power BI from: {masked_excel_file_path}")
 
     # Convert DataFrame rows to list of dicts (Power BI format)
     rows = df.where(pd.notnull(df), None).to_dict(orient='records')

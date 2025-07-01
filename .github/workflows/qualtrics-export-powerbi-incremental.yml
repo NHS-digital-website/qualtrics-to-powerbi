@@ -27,9 +27,9 @@ jobs:
         run: |
           echo "qualtricsBaseUrl=${{ secrets.QUALTRICS_BASE_URL }}" >> .env
           echo "qualtricsApiKey=${{ secrets.QUALTRICS_API_KEY }}" >> .env
-          echo "appClientID=${{ secrets.AZURE_APP_CLIENT_ID }}" >> .env          
-          echo "azureAppSecret=${{ secrets.AZURE_APP_SECRET }}" >> .env
-          echo "tenantID=${{ secrets.AZURE_TENANT_ID }}" >> .env
+          echo "azureClientID=${{ secrets.AZURE_APP_CLIENT_ID }}" >> .env          
+          echo "azureClientSecret=${{ secrets.AZURE_APP_SECRET }}" >> .env
+          echo "azureTenantID=${{ secrets.AZURE_TENANT_ID }}" >> .env
           echo "powerBIWorkspaceID=${{ secrets.POWER_BI_WORSPACE_ID }}" >> .env
           echo "powerBIDatasetID=${{ secrets.POWERBI_DATASET_ID }}" >> .env
           echo "powerBITableName=${{ secrets.POWERBI_TABLE_NAME }}" >> .env

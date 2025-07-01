@@ -9,6 +9,11 @@ import re
 import pandas as pd
 import requests
 from io import StringIO
+from office365.runtime.auth.client_credential import ClientCredential
+from office365.sharepoint.client_context import ClientContext
+
+from office365.runtime.auth.authentication_context import AuthenticationContext
+from office365.sharepoint.files.file import File
 
 # Working but with no tests or fail safes...
 
@@ -157,12 +162,12 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
 
     # File paths
     base_path = f"./exports/{surveyId}_{CleanedSurveyName}"
-    file1 = f"{base_path}_FullExtract_1.csv"  # Unmasked
-    file2 = f"{base_path}_FullExtract_2.csv"  # Masked
+    excel_path1 = f"{base_path}_FullExtract_1.xlsx"  # Unmasked    
+    excel_path2 = f"{base_path}_FullExtract_2.xlsx" # Masked
 
     # Save original version
-    filtered_df.to_csv(file1, index=False, encoding='utf-8')
-    print(f'✅ Original (unmasked) CSV saved to: {file1}')
+    filtered_df.to_excel(excel_path1, index=False, engine='openpyxl')
+    print(f'✅ Excel (unmasked) saved to: {excel_path1}')
 
     # Start masking process
     masked_df = filtered_df.copy()
@@ -181,12 +186,10 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
         for col in columns_to_replace:
             if col in masked_df.columns:
                 masked_df[col] = masked_df[col].apply(lambda x: '#####' if pd.notna(x) and str(x).strip() != '' else x)
-   
-
 
     # Save masked version
-    masked_df.to_csv(file2, index=False, encoding='utf-8')
-    print(f'✅ Masked (PII filtered + conditional replacements) CSV saved to: {file2}')
+    masked_df.to_excel(excel_path2, index=False, engine='openpyxl')
+    print(f'✅ Masked (PII filtered + conditional replacements) CSV saved to: {excel_path2}')
 
     time.sleep(1)
 
@@ -194,29 +197,18 @@ def export_the_file(surveyId, fileId, CleanedSurveyName, Questions):
     push_to_power_bi_flag = CONFIG.get("pushToPowerBIWS", "no").strip().lower()
     if push_to_power_bi_flag == "yes":
         print("📤 Pushing to Power BI as per config setting.")
-        push_to_power_bi(file2)
+        push_to_power_bi(excel_path2)
     else:
-        print("⏭️ Skipping Power BI push as 'pushToPowerBIWS' is not set to 'no'.")  
+        print("⏭️ Skipping Power BI push as 'pushToPowerBIWS' is not set to 'no'.") 
 
+    create_excel_files_based_on_referer(excel_path2) 
+    #push_excel_files_to_sharepoint()
 
-def get_access_token():
-    url = f"https://login.microsoftonline.com/{os.getenv('tenantID')}/oauth2/v2.0/token"
-    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    data = {
-        'grant_type': 'client_credentials',
-        'client_id': os.getenv('appClientID'),
-        'client_secret': os.getenv('azureAppSecret'),
-        'scope': 'https://analysis.windows.net/powerbi/api/.default'
-    }
-
-    response = requests.post(url, headers=headers, data=data)
-    response.raise_for_status()    
-    print(f"Access Token - {response.json()['access_token']}")
-    return response.json()['access_token']
-
-def push_to_power_bi(csv_path):
-    # Load CSV
-    df = pd.read_csv(csv_path)
+# Update the push_to_power_bi function to call the new function after data is pushed
+def push_to_power_bi(masked_excel_file_path):
+    # Load Excel file into a DataFrame    
+    df = pd.read_excel(masked_excel_file_path, engine='openpyxl')
+    print(f"📤 Pushing data to Power BI from: {masked_excel_file_path}")
 
     # Convert DataFrame rows to list of dicts (Power BI format)
     rows = df.where(pd.notnull(df), None).to_dict(orient='records')
@@ -241,12 +233,109 @@ def push_to_power_bi(csv_path):
     response = requests.post(insert_url, headers=headers, data=json.dumps(payload))
 
     if response.status_code == 200:
-        print("✅ Data inserted into Power BI table successfully.")
+        print("✅ Data inserted into Power BI table successfully.")        
     else:
         print("❌ Failed to insert rows:")
         print(response.status_code, response.text)
 
-    
+def create_excel_files_based_on_referer(masked_excel_file_path):
+    # Load the masked Excel file
+    df = pd.read_excel(masked_excel_file_path, engine='openpyxl')
+
+    # Get the Referer URLs from the config file
+    referer_urls = CONFIG.get("refererURLs").split('|')
+    if len(referer_urls) < 3:
+        print("❌ Config file must contain at least 3 Referer URLs.")
+        return
+
+    # Define output file paths
+    base_path = "./exports/"
+    referer_files = [
+        f"{base_path}Referer_MESH.xlsx",
+        f"{base_path}Referer_CIS.xlsx",
+        f"{base_path}Referer_NCRS.xlsx"
+    ]
+
+    # Filter and save data for each Referer URL
+    for i, url in enumerate(referer_urls):
+        filtered_df = df[df['Referer'] == url]
+        filtered_df.to_excel(referer_files[i], index=False, engine='openpyxl')
+        print(f"✅ Excel file created for Referer '{url}' at: {referer_files[i]}")
+
+def push_excel_files_to_sharepoint():
+    """
+    Pushes the generated Excel files to their respective SharePoint paths.
+    """
+    # Load SharePoint paths from config.properties
+    sharepoint_base_url = CONFIG.get("sharepointBaseUrl")
+    paths = {
+        "Referer_CIS.xlsx": CONFIG.get("sharepointPathCIS"),
+        "Referer_MESH.xlsx": CONFIG.get("sharepointPathMESH"),
+        "Referer_NCRS.xlsx": CONFIG.get("sharepointPathNCRS"),
+        "SV_egF6Gl1rITw1udM_APIM_BAU_Feedback___Linked_Survey_FullExtract_1.xlsx": CONFIG.get("sharepointPathRaw"),
+        "SV_egF6Gl1rITw1udM_APIM_BAU_Feedback___Linked_Survey_FullExtract_2.xlsx": CONFIG.get("sharepointPathRaw"),
+    }
+
+    # Define the base path for the exports directory
+    exports_dir = "./exports/"
+
+    # Iterate over the files and upload them to SharePoint
+    for file_name, sharepoint_path in paths.items():
+        file_path = os.path.join(exports_dir, file_name)
+        if os.path.exists(file_path):
+            print(f"📤 Uploading '{file_name}' to SharePoint...")
+            upload_to_sharepoint_with_aad(file_path, sharepoint_base_url, sharepoint_path)           
+        else:
+            print(f"⚠️ File '{file_name}' not found in exports directory. Skipping upload.")
+
+def upload_to_sharepoint_with_aad(file_path, sharepoint_url, folder_path):
+    """
+    Uploads a file to SharePoint using Azure AD App Registration for authentication.
+    """
+    # Azure AD App Registration credentials
+    client_id = os.getenv("sharepointClientID")
+    client_secret = os.getenv("sharepointClientSecret")
+    tenant_id = os.getenv("sharepointTenantID")  # Optional if using a multi-tenant app
+
+    # Authenticate with SharePoint
+    credentials = ClientCredential(client_id, client_secret)
+    ctx = ClientContext(sharepoint_url).with_credentials(credentials)
+    target_folder = ctx.web.get_folder_by_server_relative_url(folder_path)
+
+    # Check if the file already exists
+    file_name = os.path.basename(file_path)
+    existing_files = target_folder.files
+    ctx.load(existing_files)
+    ctx.execute_query()
+
+    for existing_file in existing_files:
+        if existing_file.properties["Name"] == file_name:
+            print(f"🔄 File '{file_name}' already exists. Deleting it...")
+            existing_file.delete_object()
+            ctx.execute_query()
+            print(f"✅ Deleted existing file '{file_name}'.")
+
+    # Upload the new file
+    with open(file_path, "rb") as content_file:
+        file_content = content_file.read()
+        target_folder.upload_file(file_name, file_content).execute_query()
+        print(f"✅ Uploaded '{file_name}' to SharePoint folder: {folder_path}")
+
+def get_access_token():
+    url = f"https://login.microsoftonline.com/{os.getenv('azureTenantID')}/oauth2/v2.0/token"
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    data = {
+        'grant_type': 'client_credentials',
+        'client_id': os.getenv('azureClientID'),
+        'client_secret': os.getenv('azureClientSecret'),
+        'scope': 'https://analysis.windows.net/powerbi/api/.default'
+    }
+
+    response = requests.post(url, headers=headers, data=data)
+    response.raise_for_status()    
+    print(f"Access Token - {response.json()['access_token']}")
+    return response.json()['access_token']
+
 
 def loop_surveys():
     
