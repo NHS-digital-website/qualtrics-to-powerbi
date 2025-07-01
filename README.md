@@ -52,7 +52,7 @@ This Python script automates the process of exporting survey data from Qualtrics
 
 - **Power BI Integration**:
 
-  - Pushes the masked data to Power BI using the Power BI REST API.
+  - Optionally pushes the masked data to Power BI if configured (pushToPowerBIWS is set to "yes").
   - Converts the data into a format suitable for Power BI and sends it to a specified dataset and table.
 
 - **Excel File Creation**:
