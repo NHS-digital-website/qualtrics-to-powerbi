@@ -1,4 +1,4 @@
-name: Qualtrics Full extract to Power BI & Sharepoint - Daily
+name: Qualtrics Full extract to Sharepoint & Power BI(Optional) - Daily
 
 on:
   schedule:
